@@ -2,6 +2,7 @@ from mysql.connector import IntegrityError
 from db.connection import db_session
 
 VALID_OPTIONS = {"A", "B", "C", "D"}
+VALID_LEVELS = {"beginner", "intermediate", "advanced"}
 
 
 def _require_teacher(user_id: int) -> None:
@@ -9,7 +10,7 @@ def _require_teacher(user_id: int) -> None:
     with db_session() as conn:
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute("SELECT role FROM users WHERE id = %s", (user_id,))
+            cursor.execute("SELECT role FROM users WHERE user_id = %s", (user_id,))
             user = cursor.fetchone()
             if not user or user.get("role") != "teacher":
                 raise PermissionError("Access denied: Teacher privileges are required.")
@@ -17,18 +18,28 @@ def _require_teacher(user_id: int) -> None:
             cursor.close()
 
 
+# ==================== LESSONS CRUD & ARCHIVE ====================
+
 def list_lessons(language_id: int, active_only: bool = True) -> list[dict]:
     with db_session() as conn:
         cursor = conn.cursor(dictionary=True)
         try:
             if active_only:
                 cursor.execute(
-                    "SELECT * FROM lessons WHERE language_id = %s AND is_active = 1 ORDER BY display_order ASC, id ASC",
+                    """
+                    SELECT * FROM lessons
+                    WHERE language_id = %s AND is_active = 1
+                    ORDER BY lesson_number ASC, lesson_id ASC
+                    """,
                     (language_id,),
                 )
             else:
                 cursor.execute(
-                    "SELECT * FROM lessons WHERE language_id = %s ORDER BY display_order ASC, id ASC",
+                    """
+                    SELECT * FROM lessons
+                    WHERE language_id = %s
+                    ORDER BY lesson_number ASC, lesson_id ASC
+                    """,
                     (language_id,),
                 )
             return cursor.fetchall()
@@ -40,7 +51,7 @@ def get_lesson(lesson_id: int) -> dict | None:
     with db_session() as conn:
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute("SELECT * FROM lessons WHERE id = %s", (lesson_id,))
+            cursor.execute("SELECT * FROM lessons WHERE lesson_id = %s", (lesson_id,))
             return cursor.fetchone()
         finally:
             cursor.close()
@@ -48,27 +59,46 @@ def get_lesson(lesson_id: int) -> dict | None:
 
 def create_lesson(
     language_id: int,
-    support_language: str,
+    support_language_id: int,
     title: str,
-    level: str,
-    display_order: int,
-    created_by: int,
+    level: str = "beginner",
+    lesson_number: int = 1,
+    created_by: int | None = None,
+    description: str | None = None,
 ) -> int:
-    _require_teacher(created_by)
+    if created_by is not None:
+        _require_teacher(created_by)
     if not title or not title.strip():
         raise ValueError("Lesson title is required.")
+    if lesson_number <= 0:
+        raise ValueError("Lesson number must be greater than 0.")
+
+    clean_level = (level or "beginner").strip().lower()
+    if clean_level not in VALID_LEVELS:
+        raise ValueError("Level must be 'beginner', 'intermediate', or 'advanced'.")
 
     with db_session() as conn:
         cursor = conn.cursor()
         try:
             cursor.execute(
                 """
-                INSERT INTO lessons (language_id, support_language, title, level, display_order, is_active, created_by)
-                VALUES (%s, %s, %s, %s, %s, 1, %s)
+                INSERT INTO lessons
+                (language_id, support_language_id, title, description, level, lesson_number, created_by, is_active)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 1)
                 """,
-                (language_id, support_language.strip(), title.strip(), level.strip(), display_order, created_by),
+                (
+                    language_id,
+                    support_language_id,
+                    title.strip(),
+                    description.strip() if description else None,
+                    clean_level,
+                    lesson_number,
+                    created_by,
+                ),
             )
             return cursor.lastrowid
+        except IntegrityError as err:
+            raise ValueError(f"Could not create lesson (duplicate lesson number/title or invalid language ID): {err}")
         finally:
             cursor.close()
 
@@ -77,34 +107,54 @@ def update_lesson(
     lesson_id: int,
     title: str,
     level: str,
-    display_order: int,
+    lesson_number: int,
     user_id: int | None = None,
+    description: str | None = None,
 ) -> None:
     if user_id is not None:
         _require_teacher(user_id)
     if not title or not title.strip():
         raise ValueError("Lesson title cannot be empty.")
+    if lesson_number <= 0:
+        raise ValueError("Lesson number must be greater than 0.")
+
+    clean_level = (level or "beginner").strip().lower()
+    if clean_level not in VALID_LEVELS:
+        raise ValueError("Level must be 'beginner', 'intermediate', or 'advanced'.")
 
     with db_session() as conn:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "UPDATE lessons SET title = %s, level = %s, display_order = %s WHERE id = %s",
-                (title.strip(), level.strip(), display_order, lesson_id),
+                """
+                UPDATE lessons
+                SET title = %s, description = %s, level = %s, lesson_number = %s
+                WHERE lesson_id = %s
+                """,
+                (
+                    title.strip(),
+                    description.strip() if description else None,
+                    clean_level,
+                    lesson_number,
+                    lesson_id,
+                ),
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"Lesson ID {lesson_id} does not exist.")
+        except IntegrityError as err:
+            raise ValueError(f"Could not update lesson (duplicate lesson number or title): {err}")
         finally:
             cursor.close()
 
 
 def archive_lesson(lesson_id: int, user_id: int | None = None) -> None:
+    """Safely deactivate a lesson while preserving historic progress and attempts."""
     if user_id is not None:
         _require_teacher(user_id)
     with db_session() as conn:
         cursor = conn.cursor()
         try:
-            cursor.execute("UPDATE lessons SET is_active = 0 WHERE id = %s", (lesson_id,))
+            cursor.execute("UPDATE lessons SET is_active = 0 WHERE lesson_id = %s", (lesson_id,))
             if cursor.rowcount == 0:
                 raise ValueError(f"Lesson ID {lesson_id} does not exist.")
         finally:
@@ -112,6 +162,7 @@ def archive_lesson(lesson_id: int, user_id: int | None = None) -> None:
 
 
 def delete_lesson(lesson_id: int, user_id: int | None = None) -> None:
+    """Physically delete a lesson only if unreferenced; otherwise block with clear guidance."""
     if user_id is not None:
         _require_teacher(user_id)
     with db_session() as conn:
@@ -128,29 +179,31 @@ def delete_lesson(lesson_id: int, user_id: int | None = None) -> None:
                     "Use archive_lesson() instead to preserve history."
                 )
 
-            cursor.execute("DELETE FROM lessons WHERE id = %s", (lesson_id,))
+            cursor.execute("DELETE FROM lessons WHERE lesson_id = %s", (lesson_id,))
             if cursor.rowcount == 0:
                 raise ValueError(f"Lesson ID {lesson_id} does not exist.")
         except IntegrityError:
-            raise ValueError("Delete blocked: Lesson is referenced by existing records. Archive it instead.")
+            raise ValueError(
+                "Delete blocked: Lesson is referenced by existing records. Archive it instead."
+            )
         finally:
             cursor.close()
 
 
-def list_lesson_items(lesson_id: int, active_only: bool = True) -> list[dict]:
+# ==================== LESSON ITEMS CRUD ====================
+
+def list_lesson_items(lesson_id: int) -> list[dict]:
     with db_session() as conn:
         cursor = conn.cursor(dictionary=True)
         try:
-            if active_only:
-                cursor.execute(
-                    "SELECT * FROM lesson_items WHERE lesson_id = %s AND is_active = 1 ORDER BY display_order ASC, id ASC",
-                    (lesson_id,),
-                )
-            else:
-                cursor.execute(
-                    "SELECT * FROM lesson_items WHERE lesson_id = %s ORDER BY display_order ASC, id ASC",
-                    (lesson_id,),
-                )
+            cursor.execute(
+                """
+                SELECT * FROM lesson_items
+                WHERE lesson_id = %s
+                ORDER BY item_number ASC, item_id ASC
+                """,
+                (lesson_id,),
+            )
             return cursor.fetchall()
         finally:
             cursor.close()
@@ -158,17 +211,20 @@ def list_lesson_items(lesson_id: int, active_only: bool = True) -> list[dict]:
 
 def add_lesson_item(
     lesson_id: int,
-    term: str,
-    translation: str,
+    term_text: str,
+    translation_text: str,
     pronunciation: str | None = None,
-    example: str | None = None,
-    display_order: int = 1,
+    example_sentence: str | None = None,
+    example_translation: str | None = None,
+    item_number: int = 1,
     created_by: int | None = None,
 ) -> int:
     if created_by is not None:
         _require_teacher(created_by)
-    if not term or not term.strip() or not translation or not translation.strip():
+    if not term_text or not term_text.strip() or not translation_text or not translation_text.strip():
         raise ValueError("Both term and translation are required.")
+    if item_number <= 0:
+        raise ValueError("Item number must be greater than 0.")
 
     with db_session() as conn:
         cursor = conn.cursor()
@@ -176,36 +232,42 @@ def add_lesson_item(
             cursor.execute(
                 """
                 INSERT INTO lesson_items
-                (lesson_id, term, translation, pronunciation, example, display_order, is_active)
-                VALUES (%s, %s, %s, %s, %s, %s, 1)
+                (lesson_id, item_number, term_text, translation_text, pronunciation, example_sentence, example_translation)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     lesson_id,
-                    term.strip(),
-                    translation.strip(),
+                    item_number,
+                    term_text.strip(),
+                    translation_text.strip(),
                     pronunciation.strip() if pronunciation else None,
-                    example.strip() if example else None,
-                    display_order,
+                    example_sentence.strip() if example_sentence else None,
+                    example_translation.strip() if example_translation else None,
                 ),
             )
             return cursor.lastrowid
+        except IntegrityError as err:
+            raise ValueError(f"Could not add lesson item (duplicate item number or invalid lesson ID): {err}")
         finally:
             cursor.close()
 
 
 def update_lesson_item(
     item_id: int,
-    term: str,
-    translation: str,
+    term_text: str,
+    translation_text: str,
     pronunciation: str | None = None,
-    example: str | None = None,
-    display_order: int = 1,
+    example_sentence: str | None = None,
+    example_translation: str | None = None,
+    item_number: int = 1,
     user_id: int | None = None,
 ) -> None:
     if user_id is not None:
         _require_teacher(user_id)
-    if not term or not term.strip() or not translation or not translation.strip():
+    if not term_text or not term_text.strip() or not translation_text or not translation_text.strip():
         raise ValueError("Both term and translation are required.")
+    if item_number <= 0:
+        raise ValueError("Item number must be greater than 0.")
 
     with db_session() as conn:
         cursor = conn.cursor()
@@ -213,20 +275,24 @@ def update_lesson_item(
             cursor.execute(
                 """
                 UPDATE lesson_items
-                SET term = %s, translation = %s, pronunciation = %s, example = %s, display_order = %s
-                WHERE id = %s
+                SET item_number = %s, term_text = %s, translation_text = %s,
+                    pronunciation = %s, example_sentence = %s, example_translation = %s
+                WHERE item_id = %s
                 """,
                 (
-                    term.strip(),
-                    translation.strip(),
+                    item_number,
+                    term_text.strip(),
+                    translation_text.strip(),
                     pronunciation.strip() if pronunciation else None,
-                    example.strip() if example else None,
-                    display_order,
+                    example_sentence.strip() if example_sentence else None,
+                    example_translation.strip() if example_translation else None,
                     item_id,
                 ),
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"Lesson item ID {item_id} does not exist.")
+        except IntegrityError as err:
+            raise ValueError(f"Could not update lesson item (duplicate item number): {err}")
         finally:
             cursor.close()
 
@@ -237,30 +303,33 @@ def delete_lesson_item(item_id: int, user_id: int | None = None) -> None:
     with db_session() as conn:
         cursor = conn.cursor()
         try:
-            cursor.execute("DELETE FROM lesson_items WHERE id = %s", (item_id,))
+            cursor.execute("DELETE FROM lesson_items WHERE item_id = %s", (item_id,))
             if cursor.rowcount == 0:
                 raise ValueError(f"Lesson item ID {item_id} does not exist.")
         finally:
             cursor.close()
 
 
+# ==================== QUESTIONS CRUD & ARCHIVE ====================
+
 def create_question(
     lesson_id: int,
-    prompt: str,
-    option_a: str,
-    option_b: str,
-    option_c: str,
-    option_d: str,
+    question_text: str,
+    choice_a: str,
+    choice_b: str,
+    choice_c: str,
+    choice_d: str,
     correct_option: str,
-    explanation: str | None,
-    created_by: int,
+    explanation: str | None = None,
+    created_by: int | None = None,
 ) -> int:
-    _require_teacher(created_by)
+    if created_by is not None:
+        _require_teacher(created_by)
     clean_opt = (correct_option or "").strip().upper()
     if clean_opt not in VALID_OPTIONS:
         raise ValueError("Correct option must be A, B, C, or D.")
-    if not all((val or "").strip() for val in (prompt, option_a, option_b, option_c, option_d)):
-        raise ValueError("Question prompt and all four options (A-D) are required.")
+    if not all((val or "").strip() for val in (question_text, choice_a, choice_b, choice_c, choice_d)):
+        raise ValueError("Question text and all four choices (A-D) are required.")
 
     with db_session() as conn:
         cursor = conn.cursor()
@@ -268,21 +337,24 @@ def create_question(
             cursor.execute(
                 """
                 INSERT INTO questions
-                (lesson_id, prompt, option_a, option_b, option_c, option_d, correct_option, explanation, is_active)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1)
+                (lesson_id, question_text, choice_a, choice_b, choice_c, choice_d, correct_option, explanation, created_by, is_active)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
                 """,
                 (
                     lesson_id,
-                    prompt.strip(),
-                    option_a.strip(),
-                    option_b.strip(),
-                    option_c.strip(),
-                    option_d.strip(),
+                    question_text.strip(),
+                    choice_a.strip(),
+                    choice_b.strip(),
+                    choice_c.strip(),
+                    choice_d.strip(),
                     clean_opt,
                     explanation.strip() if explanation else None,
+                    created_by,
                 ),
             )
             return cursor.lastrowid
+        except IntegrityError as err:
+            raise ValueError(f"Could not create question (invalid lesson ID): {err}")
         finally:
             cursor.close()
 
@@ -293,12 +365,12 @@ def list_questions(lesson_id: int, active_only: bool = True) -> list[dict]:
         try:
             if active_only:
                 cursor.execute(
-                    "SELECT * FROM questions WHERE lesson_id = %s AND is_active = 1 ORDER BY id ASC",
+                    "SELECT * FROM questions WHERE lesson_id = %s AND is_active = 1 ORDER BY question_id ASC",
                     (lesson_id,),
                 )
             else:
                 cursor.execute(
-                    "SELECT * FROM questions WHERE lesson_id = %s ORDER BY id ASC",
+                    "SELECT * FROM questions WHERE lesson_id = %s ORDER BY question_id ASC",
                     (lesson_id,),
                 )
             return cursor.fetchall()
@@ -308,11 +380,11 @@ def list_questions(lesson_id: int, active_only: bool = True) -> list[dict]:
 
 def update_question(
     question_id: int,
-    prompt: str,
-    option_a: str,
-    option_b: str,
-    option_c: str,
-    option_d: str,
+    question_text: str,
+    choice_a: str,
+    choice_b: str,
+    choice_c: str,
+    choice_d: str,
     correct_option: str,
     explanation: str | None = None,
     user_id: int | None = None,
@@ -322,8 +394,8 @@ def update_question(
     clean_opt = (correct_option or "").strip().upper()
     if clean_opt not in VALID_OPTIONS:
         raise ValueError("Correct option must be A, B, C, or D.")
-    if not all((val or "").strip() for val in (prompt, option_a, option_b, option_c, option_d)):
-        raise ValueError("Question prompt and all four options (A-D) are required.")
+    if not all((val or "").strip() for val in (question_text, choice_a, choice_b, choice_c, choice_d)):
+        raise ValueError("Question text and all four choices (A-D) are required.")
 
     with db_session() as conn:
         cursor = conn.cursor()
@@ -331,16 +403,16 @@ def update_question(
             cursor.execute(
                 """
                 UPDATE questions
-                SET prompt = %s, option_a = %s, option_b = %s, option_c = %s,
-                    option_d = %s, correct_option = %s, explanation = %s
-                WHERE id = %s
+                SET question_text = %s, choice_a = %s, choice_b = %s, choice_c = %s,
+                    choice_d = %s, correct_option = %s, explanation = %s
+                WHERE question_id = %s
                 """,
                 (
-                    prompt.strip(),
-                    option_a.strip(),
-                    option_b.strip(),
-                    option_c.strip(),
-                    option_d.strip(),
+                    question_text.strip(),
+                    choice_a.strip(),
+                    choice_b.strip(),
+                    choice_c.strip(),
+                    choice_d.strip(),
                     clean_opt,
                     explanation.strip() if explanation else None,
                     question_id,
@@ -353,12 +425,13 @@ def update_question(
 
 
 def archive_question(question_id: int, user_id: int | None = None) -> None:
+    """Safely deactivate a question while preserving historic quiz attempt answers."""
     if user_id is not None:
         _require_teacher(user_id)
     with db_session() as conn:
         cursor = conn.cursor()
         try:
-            cursor.execute("UPDATE questions SET is_active = 0 WHERE id = %s", (question_id,))
+            cursor.execute("UPDATE questions SET is_active = 0 WHERE question_id = %s", (question_id,))
             if cursor.rowcount == 0:
                 raise ValueError(f"Question ID {question_id} does not exist.")
         finally:
@@ -366,6 +439,7 @@ def archive_question(question_id: int, user_id: int | None = None) -> None:
 
 
 def delete_question(question_id: int, user_id: int | None = None) -> None:
+    """Physically delete a question only if never answered; otherwise block and recommend archiving."""
     if user_id is not None:
         _require_teacher(user_id)
     with db_session() as conn:
@@ -378,10 +452,12 @@ def delete_question(question_id: int, user_id: int | None = None) -> None:
                     "Use archive_question() instead to preserve student history."
                 )
 
-            cursor.execute("DELETE FROM questions WHERE id = %s", (question_id,))
+            cursor.execute("DELETE FROM questions WHERE question_id = %s", (question_id,))
             if cursor.rowcount == 0:
                 raise ValueError(f"Question ID {question_id} does not exist.")
         except IntegrityError:
-            raise ValueError("Delete blocked: Question is referenced by historic attempt answers. Archive it instead.")
+            raise ValueError(
+                "Delete blocked: Question is referenced by historic attempt answers. Archive it instead."
+            )
         finally:
             cursor.close()

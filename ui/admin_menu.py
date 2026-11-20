@@ -27,15 +27,18 @@ def _prompt_int(message: str) -> int | None:
         return None
 
 
-def _select_language() -> int | None:
+def _select_language(prompt_label: str = "Select Language ID: ") -> int | None:
     languages = list_active_languages()
     if not languages:
         print("No active languages available.")
         return None
     print("\n--- Active Languages ---")
     for lang in languages:
-        print(f"{lang['id']}. {lang['name']} ({lang['code']})")
-    return _prompt_int("Select Language ID: ")
+        lang_id = lang.get("language_id") or lang.get("id")
+        lang_name = lang.get("language_name") or lang.get("name")
+        lang_code = lang.get("language_code") or lang.get("code")
+        print(f"{lang_id}. {lang_name} ({lang_code})")
+    return _prompt_int(prompt_label)
 
 
 def run_admin_menu(current_user: dict) -> None:
@@ -72,8 +75,9 @@ def run_admin_menu(current_user: dict) -> None:
                 else:
                     print("\n--- All Student Quiz Results ---")
                     for att in attempts:
+                        att_id = att.get("attempt_id") or att.get("id")
                         print(
-                            f"Attempt #{att['id']} | Student: {att.get('username', att.get('user_id'))} "
+                            f"Attempt #{att_id} | Student: {att.get('username', att.get('user_id'))} "
                             f"| Lesson: {att.get('lesson_title', att.get('lesson_id'))} "
                             f"| Score: {att['score']}/{att['total_questions']}"
                         )
@@ -105,18 +109,21 @@ def _manage_lessons(teacher_id: int) -> None:
             print("No lessons found for that language.")
         for lsn in lessons:
             state = "ACTIVE" if lsn.get("is_active", 1) else "ARCHIVED"
-            print(f"[{lsn['id']}] {lsn['title']} | Level: {lsn['level']} | Order: {lsn['display_order']} | {state}")
+            print(f"[{lsn['lesson_id']}] {lsn['title']} | Level: {lsn['level']} | Lesson #{lsn['lesson_number']} | {state}")
 
     elif sub == "2":
-        lang_id = _select_language()
+        lang_id = _select_language("Select Target Language ID: ")
         if lang_id is None:
             return
+        support_lang_id = _select_language("Select Support (Translation) Language ID: ")
+        if support_lang_id is None:
+            return
         title = input("Lesson Title: ")
-        level = input("Level (default: Beginner): ") or "Beginner"
-        support = input("Support Language (default: English): ") or "English"
-        order = _prompt_int("Display Order (e.g., 1): ")
-        if order is not None:
-            new_id = create_lesson(lang_id, support, title, level, order, teacher_id)
+        description = input("Description (optional): ")
+        level = input("Level (beginner/intermediate/advanced, default: beginner): ").strip() or "beginner"
+        lesson_num = _prompt_int("Lesson Number (e.g., 1): ")
+        if lesson_num is not None:
+            new_id = create_lesson(lang_id, support_lang_id, title, level, lesson_num, teacher_id, description)
             print(f"Lesson created with ID {new_id}.")
 
     elif sub == "3":
@@ -124,10 +131,11 @@ def _manage_lessons(teacher_id: int) -> None:
         if lesson_id is None:
             return
         title = input("Updated Title: ")
-        level = input("Updated Level: ") or "Beginner"
-        order = _prompt_int("Updated Display Order: ")
-        if order is not None:
-            update_lesson(lesson_id, title, level, order, teacher_id)
+        description = input("Updated Description (optional): ")
+        level = input("Updated Level (beginner/intermediate/advanced): ").strip() or "beginner"
+        lesson_num = _prompt_int("Updated Lesson Number: ")
+        if lesson_num is not None:
+            update_lesson(lesson_id, title, level, lesson_num, teacher_id, description)
             print("Lesson updated successfully.")
 
     elif sub == "4":
@@ -157,36 +165,56 @@ def _manage_items(teacher_id: int) -> None:
         lesson_id = _prompt_int("Lesson ID: ")
         if lesson_id is None:
             return
-        items = list_lesson_items(lesson_id, active_only=False)
+        items = list_lesson_items(lesson_id)
         if not items:
             print("No items found for this lesson.")
         for item in items:
-            print(f"[{item['id']}] {item['term']} = {item['translation']} (Order: {item['display_order']})")
+            print(f"[{item['item_id']}] #{item['item_number']} {item['term_text']} = {item['translation_text']}")
 
     elif sub == "2":
         lesson_id = _prompt_int("Lesson ID: ")
         if lesson_id is None:
             return
-        term = input("Word/Phrase: ")
-        translation = input("Translation: ")
+        term_text = input("Word/Phrase: ")
+        translation_text = input("Translation: ")
         pronunciation = input("Pronunciation (optional): ")
-        example = input("Example Sentence (optional): ")
-        order = _prompt_int("Display Order (e.g., 1): ")
-        if order is not None:
-            item_id = add_lesson_item(lesson_id, term, translation, pronunciation, example, order, teacher_id)
+        example_sentence = input("Example Sentence (optional): ")
+        example_translation = input("Example Translation (optional): ")
+        item_num = _prompt_int("Item Number (e.g., 1): ")
+        if item_num is not None:
+            item_id = add_lesson_item(
+                lesson_id,
+                term_text,
+                translation_text,
+                pronunciation,
+                example_sentence,
+                example_translation,
+                item_num,
+                teacher_id,
+            )
             print(f"Lesson item added with ID {item_id}.")
 
     elif sub == "3":
         item_id = _prompt_int("Lesson Item ID to update: ")
         if item_id is None:
             return
-        term = input("Updated Word/Phrase: ")
-        translation = input("Updated Translation: ")
+        term_text = input("Updated Word/Phrase: ")
+        translation_text = input("Updated Translation: ")
         pronunciation = input("Updated Pronunciation (optional): ")
-        example = input("Updated Example (optional): ")
-        order = _prompt_int("Updated Display Order: ")
-        if order is not None:
-            update_lesson_item(item_id, term, translation, pronunciation, example, order, teacher_id)
+        example_sentence = input("Updated Example Sentence (optional): ")
+        example_translation = input("Updated Example Translation (optional): ")
+        item_num = _prompt_int("Updated Item Number: ")
+        if item_num is not None:
+            update_lesson_item(
+                item_id,
+                term_text,
+                translation_text,
+                pronunciation,
+                example_sentence,
+                example_translation,
+                item_num,
+                teacher_id,
+            )
             print("Lesson item updated.")
 
     elif sub == "4":
@@ -216,34 +244,38 @@ def _manage_questions(teacher_id: int) -> None:
             print("No questions found for this lesson.")
         for q in questions:
             state = "ACTIVE" if q.get("is_active", 1) else "ARCHIVED"
-            print(f"[{q['id']}] {q['prompt']} (Correct: {q['correct_option']}) [{state}]")
+            print(f"[{q['question_id']}] {q['question_text']} (Correct: {q['correct_option']}) [{state}]")
 
     elif sub == "2":
         lesson_id = _prompt_int("Lesson ID: ")
         if lesson_id is None:
             return
-        prompt = input("Question Prompt: ")
-        opt_a = input("Option A: ")
-        opt_b = input("Option B: ")
-        opt_c = input("Option C: ")
-        opt_d = input("Option D: ")
+        question_text = input("Question Text: ")
+        choice_a = input("Choice A: ")
+        choice_b = input("Choice B: ")
+        choice_c = input("Choice C: ")
+        choice_d = input("Choice D: ")
         correct = input("Correct Option (A/B/C/D): ")
         explanation = input("Explanation (optional): ")
-        q_id = create_question(lesson_id, prompt, opt_a, opt_b, opt_c, opt_d, correct, explanation, teacher_id)
+        q_id = create_question(
+            lesson_id, question_text, choice_a, choice_b, choice_c, choice_d, correct, explanation, teacher_id
+        )
         print(f"Question created with ID {q_id}.")
 
     elif sub == "3":
         q_id = _prompt_int("Question ID to update: ")
         if q_id is None:
             return
-        prompt = input("Updated Prompt: ")
-        opt_a = input("Option A: ")
-        opt_b = input("Option B: ")
-        opt_c = input("Option C: ")
-        opt_d = input("Option D: ")
+        question_text = input("Updated Question Text: ")
+        choice_a = input("Choice A: ")
+        choice_b = input("Choice B: ")
+        choice_c = input("Choice C: ")
+        choice_d = input("Choice D: ")
         correct = input("Correct Option (A/B/C/D): ")
         explanation = input("Updated Explanation (optional): ")
-        update_question(q_id, prompt, opt_a, opt_b, opt_c, opt_d, correct, explanation, teacher_id)
+        update_question(
+            q_id, question_text, choice_a, choice_b, choice_c, choice_d, correct, explanation, teacher_id
+        )
         print("Question updated.")
 
     elif sub == "4":
