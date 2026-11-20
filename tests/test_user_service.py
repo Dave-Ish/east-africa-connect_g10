@@ -150,3 +150,44 @@ def test_delete_requires_password_and_confirmation():
     svc.delete_account(uid, "password123", "DELETE")
     with pytest.raises(svc.UserError):
         svc.login_user("amina", "password123")
+
+
+# ---------- menu behaviour (registration prompt, logout handoff) ----------
+def _feed(monkeypatch, inputs, secrets=()):
+    from ui import auth_menu
+    it, st = iter(inputs), iter(secrets)
+    monkeypatch.setattr("builtins.input", lambda _="": next(it))
+    monkeypatch.setattr(auth_menu, "getpass", lambda _="": next(st))
+    monkeypatch.setattr("ui.terminal.clear_screen", lambda: None)
+    return auth_menu
+
+
+def test_registration_prompt_has_no_role_choice_and_creates_student(monkeypatch, capsys):
+    menu = _feed(monkeypatch, ["amina"], ["password123", "password123"])
+    menu.register_screen()
+    out = capsys.readouterr().out.lower()
+    assert "teacher" not in out and "role" not in out
+    assert svc.login_user("amina", "password123")["role"] == "student"
+
+
+def test_register_screen_shows_readable_errors(monkeypatch, capsys):
+    svc.register_user("amina", "password123")
+    menu = _feed(monkeypatch, ["amina"], ["password123", "password123"])
+    menu.register_screen()
+    assert "already taken" in capsys.readouterr().out
+    menu = _feed(monkeypatch, ["ab"], ["password123", "password123"])
+    menu.register_screen()
+    assert "3-30 characters" in capsys.readouterr().out
+
+
+def test_logout_returns_none(monkeypatch, capsys):
+    menu = _feed(monkeypatch, ["5"])
+    user = {"user_id": 1, "username": "amina", "role": "student"}
+    assert menu.account_menu(user) is None
+    assert "logged out" in capsys.readouterr().out
+
+
+def test_back_keeps_user_logged_in(monkeypatch):
+    menu = _feed(monkeypatch, ["0"])
+    user = {"user_id": 1, "username": "amina", "role": "student"}
+    assert menu.account_menu(user) == user

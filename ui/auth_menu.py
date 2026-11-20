@@ -42,12 +42,16 @@ def login_screen():
 
 
 def account_menu(user):
-    """Profile / username / password / delete. Returns the (possibly updated)
-    user dict, or None if the account was deleted."""
-    options = ["View profile", "Change username", "Change password", "Delete my account"]
+    """Profile / username / password / delete / log out.
+
+    Returns the (possibly updated) user dict if the person just goes Back
+    (still logged in), or None if they logged out or deleted the account.
+    The caller should treat None as 'nobody is logged in'."""
+    options = ["View profile", "Change username", "Change password",
+               "Delete my account", "Log out"]
     while True:
         t.show_menu("MY ACCOUNT", options)
-        choice = t.choose("Select an option: ", ["0", "1", "2", "3", "4"])
+        choice = t.choose("Select an option: ", ["0", "1", "2", "3", "4", "5"])
         try:
             if choice == "0":
                 return user
@@ -68,6 +72,9 @@ def account_menu(user):
                 conf = t.ask("Type DELETE to confirm: ")
                 svc.delete_account(user["user_id"], pw, conf)
                 print("  Account deleted.")
+                return None
+            elif choice == "5":
+                print("  You have been logged out.")
                 return None
         except svc.UserError as err:
             print(f"  Error: {err}")
