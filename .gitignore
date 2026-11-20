@@ -2,3 +2,31 @@ venv/
 __pycache__/
 .env
 *.pyc
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local secrets and Aiven certificates
+.env
+.env.*
+!.env.example
+*.pem
+*.crt
+*.key
+
+# Test and coverage output
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Operating-system files
+.DS_Store
+Thumbs.db
