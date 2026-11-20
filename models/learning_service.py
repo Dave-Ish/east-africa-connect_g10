@@ -1,5 +1,9 @@
-
-from db.connection import db_session
+try:
+    from db.connection import db_session
+except ModuleNotFoundError:
+    # db module not built yet by team - tests will mock this
+    def db_session():
+        raise NotImplementedError("db.connection not implemented yet")
 
 def open_lesson(user_id: int, lesson_id: int) -> tuple[dict, list[dict]]:
     with db_session() as conn:
