@@ -1,36 +1,44 @@
-"""Load sample data. Usage: python scripts/seed_data.py [db_path]
+"""Load sample data into the team's MySQL database.
 
-Runs db/schema.sql (if present) then db/seed.sql against a SQLite file
-(default: app.db).
+Usage: python3 scripts/seed_data.py
+
+Needs the same environment variables as connections.py (MYSQL_* settings).
+Runs db/schema.sql first (via init_db), then db/seed.sql.
 """
-import sqlite3
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from connections import db_session, init_db  # noqa: E402
+
+SEED_PATH = ROOT / "db" / "seed.sql"
 
 
-def run_sql_file(conn, path):
-    if path.exists():
-        conn.executescript(path.read_text(encoding="utf-8"))
-        print(f"Loaded {path.relative_to(ROOT)}")
-        return True
-    return False
+def main():
+    if not SEED_PATH.exists():
+        print("db/seed.sql not found - nothing to load.")
+        return 1
 
+    database = init_db()
+    print(f"Schema applied to database '{database}'.")
 
-def main(db_path="app.db"):
-    conn = sqlite3.connect(db_path)
-    try:
-        run_sql_file(conn, ROOT / "db" / "schema.sql")
-        if not run_sql_file(conn, ROOT / "db" / "seed.sql"):
-            print("db/seed.sql not found - nothing to load.")
-            return 1
-        conn.commit()
-    finally:
-        conn.close()
-    print(f"Sample data ready in {db_path}")
+    sql = SEED_PATH.read_text(encoding="utf-8")
+    statements = [s.strip() for s in sql.split(";") if s.strip()]
+
+    with db_session() as conn:
+        cursor = conn.cursor()
+        try:
+            for statement in statements:
+                cursor.execute(statement)
+            conn.commit()
+        finally:
+            cursor.close()
+
+    print(f"Loaded {len(statements)} statements from db/seed.sql.")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(*sys.argv[1:2]))
+    sys.exit(main())
