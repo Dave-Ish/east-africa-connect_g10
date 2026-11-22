@@ -1,6 +1,6 @@
 """Display quiz attempts for the logged-in student."""
 
-from connections import db_session
+from db.connections import db_session
 
 
 def show_history(user_id=None):
