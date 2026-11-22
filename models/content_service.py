@@ -398,8 +398,21 @@ def update_question(
         raise ValueError("Question text and all four choices (A-D) are required.")
 
     with db_session() as conn:
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
         try:
+            # A quiz attempt stores its question roster in attempt_answers.
+            # Changing a question after that point would make saved history
+            # and feedback misleading; archive it and create a replacement.
+            cursor.execute(
+                "SELECT COUNT(*) AS cnt FROM attempt_answers WHERE question_id = %s",
+                (question_id,),
+            )
+            if cursor.fetchone()["cnt"] > 0:
+                raise ValueError(
+                    "Cannot update question because it is referenced by a saved quiz attempt. "
+                    "Archive it and create a new question to preserve history."
+                )
+
             cursor.execute(
                 """
                 UPDATE questions
