@@ -48,6 +48,9 @@ def run_admin_menu(current_user: dict) -> None:
         return
 
     teacher_id = current_user.get("user_id") or current_user.get("id")
+    if isinstance(teacher_id, bool) or not isinstance(teacher_id, int) or teacher_id <= 0:
+        print("Access denied: the logged-in teacher has no valid user ID.")
+        return
 
     while True:
         print("\n==============================================")
@@ -79,7 +82,8 @@ def run_admin_menu(current_user: dict) -> None:
                         print(
                             f"Attempt #{att_id} | Student: {att.get('username', att.get('user_id'))} "
                             f"| Lesson: {att.get('lesson_title', att.get('lesson_id'))} "
-                            f"| Score: {att['score']}/{att['total_questions']}"
+                            f"| Score: {att['score']}/{att['total_questions']} "
+                            f"| Status: {att.get('status', 'unknown')}"
                         )
             elif choice == "0":
                 break
