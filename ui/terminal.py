@@ -1,7 +1,7 @@
 """Shared terminal helpers: banners, safe input, clear screen."""
 import os
 
-APP_NAME = "LinguaLearn"
+APP_NAME = "East Africa Connect"
 WIDTH = 50
 
 

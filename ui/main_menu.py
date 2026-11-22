@@ -1,95 +1,157 @@
-"""Main menu and role-based routing."""
-import importlib
+"""Main terminal menu and role-based routing for East Africa Connect.
 
+This module connects the UI files shared by the team:
+- ui.auth_menu: run_auth(), account_menu(user)
+- ui.learning_menu: browse_and_learn(user), show_progress(user)
+- ui.admin_menu: run_admin_menu(user)
+- ui.terminal: shared terminal/menu helpers
+"""
+
+from ui import admin_menu, auth_menu, learning_menu
 from ui import terminal as t
 
 
-def _call(module_name, func_name, *args):
-    """Call a teammate's function and return its result.
+def _with_learning_id_alias(user: dict) -> dict:
+    """Provide both ID keys until learning_menu is standardized on user_id.
 
-    Returns None if the function is missing or raises, so the app never crashes.
+    auth_menu.login_screen() returns {user_id, username, role}, while the
+    supplied learning_menu currently reads user["id"]. This adapter lets the
+    files work together without requiring changes to either shared module.
     """
+    if not isinstance(user, dict):
+        raise TypeError("The login menu must return a user dictionary.")
+
+    user_id = user.get("user_id")
+    if user_id is None:
+        user_id = user.get("id")
+    if user_id is None:
+        raise ValueError("The logged-in user has no user_id or id.")
+
+    normalized = dict(user)
+    normalized["user_id"] = user_id
+    normalized["id"] = user_id
+    return normalized
+
+
+def _run_screen(label: str, screen, *args) -> None:
+    """Run one feature screen without letting an error end the CLI loop."""
     try:
-        module = importlib.import_module(module_name)
-        func = getattr(module, func_name)
-    except (ImportError, AttributeError):
-        print(f"\n  '{module_name}.{func_name}' is not available yet.")
-        return None
-    try:
-        return func(*args)
-    except Exception as err:  # keep the app alive during the demo
-        print(f"\n  Something went wrong: {err}")
-        return None
+        screen(*args)
+    except Exception as err:
+        print(f"\n  Could not open {label}: {err}")
+    t.pause()
 
 
-def login_student():
-    """Get the logged-in student's user ID, or None to go back."""
-    try:
-        getattr(importlib.import_module("auth"), "login_user")
-        has_auth = True
-    except (ImportError, AttributeError):
-        has_auth = False
+def _student_session(user: dict) -> None:
+    """Show student actions until the student logs out or returns."""
+    user = _with_learning_id_alias(user)
+    options = ["Learn a lesson", "View my learning progress", "Manage my account"]
 
-    if has_auth:
-        # Teammate's login: auth.login_user(username, password) -> user_id or None
-        username = t.ask("Username: ")
-        password = t.ask("Password: ")
-        user_id = _call("auth", "login_user", username, password)
-        if user_id is None:
-            print("  Login failed.")
-        return user_id
-
-    # Fallback until the login module exists: type your user ID
-    while True:
-        raw = t.ask("Enter your user ID (0 to go back): ")
-        if raw == "0":
-            return None
-        if raw.isdigit():
-            return int(raw)
-        print(f"  Invalid user ID '{raw}'. Please enter a number.")
-
-
-def student_menu(user_id):
-    options = ["Learn", "Take a quiz", "View my history"]
     while True:
         t.clear_screen()
         t.show_menu("STUDENT MENU", options)
         choice = t.choose("Select an option: ", ["0", "1", "2", "3"])
+
         if choice == "0":
-            return  # back to main menu
+            print("\n  Returning to the welcome menu.")
+            return
         if choice == "1":
-            _call("learn", "start_learning")
+            _run_screen("the learning menu", learning_menu.browse_and_learn, user)
         elif choice == "2":
-            _call("quiz", "start_quiz")
+            _run_screen("your progress", learning_menu.show_progress, user)
         elif choice == "3":
-            _call("history", "show_history", user_id)  # sends the student's ID
+            try:
+                updated_user = auth_menu.account_menu(user)
+            except Exception as err:
+                print(f"\n  Could not open account settings: {err}")
+                t.pause()
+                continue
+
+            if updated_user is None:
+                print("\n  You are logged out.")
+                t.pause()
+                return
+
+            try:
+                user = _with_learning_id_alias(updated_user)
+            except (TypeError, ValueError) as err:
+                print(f"\n  Account data error: {err}")
+                t.pause()
+                return
+
+
+def _teacher_session(user: dict) -> None:
+    """Route an authenticated teacher to content/score tools and account options."""
+    if not isinstance(user, dict) or user.get("role") != "teacher":
+        print("\n  Access denied: a teacher account is required.")
         t.pause()
+        return
 
-
-def teacher_menu():
-    options = ["Manage content (add / edit / delete)"]
+    options = ["Manage content and review student scores", "Manage my account"]
     while True:
         t.clear_screen()
         t.show_menu("TEACHER MENU", options)
-        choice = t.choose("Select an option: ", ["0", "1"])
+        choice = t.choose("Select an option: ", ["0", "1", "2"])
+
         if choice == "0":
+            print("\n  You are logged out.")
             return
-        _call("content", "manage_content")
-        t.pause()
+        if choice == "1":
+            # run_admin_menu checks the teacher role and includes content CRUD
+            # and the all-student quiz-score view.
+            try:
+                admin_menu.run_admin_menu(user)
+            except Exception as err:
+                print(f"\n  Could not open teacher tools: {err}")
+                t.pause()
+            # The admin menu's 0 option is labelled Logout / Return to Main Menu.
+            return
+
+        try:
+            updated_user = auth_menu.account_menu(user)
+        except Exception as err:
+            print(f"\n  Could not open account settings: {err}")
+            t.pause()
+            continue
+
+        if updated_user is None:
+            print("\n  You are logged out.")
+            t.pause()
+            return
+        user = updated_user
 
 
-def run_app():
-    options = ["I am a Student", "I am a Teacher"]
+def run_app() -> None:
+    """Authenticate, then route to a menu using the stored account role."""
     while True:
         t.welcome()
-        t.show_menu("MAIN MENU", options)
-        choice = t.choose("Select an option: ", ["0", "1", "2"])
-        if choice == "1":
-            user_id = login_student()
-            if user_id is not None:
-                student_menu(user_id)
-        elif choice == "2":
-            teacher_menu()
-        else:
+        t.show_menu("MAIN MENU", ["Register / log in"])
+        choice = t.choose("Select an option: ", ["0", "1"])
+
+        if choice == "0":
             print(f"\nGoodbye from {t.APP_NAME}!")
             return
+
+        try:
+            user = auth_menu.run_auth()
+        except Exception as err:
+            print(f"\n  Sign-in could not be completed: {err}")
+            t.pause()
+            continue
+
+        # run_auth() returns None when the user chooses Exit in the account menu.
+        if user is None:
+            continue
+
+        role = user.get("role") if isinstance(user, dict) else None
+        if role == "student":
+            _student_session(user)
+        elif role == "teacher":
+            _teacher_session(user)
+        else:
+            print("\n  This account has no recognized role; access was not granted.")
+            t.pause()
+
+
+if __name__ == "__main__":
+    run_app()

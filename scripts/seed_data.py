@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from connections import db_session, init_db  # noqa: E402
+from db.connections import db_session, init_db  # noqa: E402
 
 SEED_PATH = ROOT / "db" / "seed.sql"
 
