@@ -25,7 +25,7 @@ def browse_and_learn(user):
         print("No active lessons for this language yet.")
         return
     for les in lessons:
-        print(f"{les['id']}. {les['title']} - Level: {les['level']}")
+        print(f"{les['lesson_id']}. {les['title']} - Level: {les['level']}")
 
     lesson_id = _ask_int("Choose lesson ID: ")
     if lesson_id is None:
